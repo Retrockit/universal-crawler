@@ -1,0 +1,22 @@
+{
+  "include": ["src", "tests"],
+  "exclude": ["**/node_modules", "**/__pycache__", "src/experimental"],
+  "ignore": [],
+  "defineConstant": {},
+  "stubPath": "",
+  "venvPath": "",
+  "venv": "",
+  "pythonVersion": "3.11",
+  "pythonPlatform": "Linux",
+  "executionEnvironments": [
+    {
+      "root": "src"
+    }
+  ],
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "none",
+  "reportMissingTypeStubs": "none",
+  "reportOptionalMemberAccess": "warning",
+  "reportOptionalSubscript": "warning",
+  "reportPrivateImportUsage": "warning"
+}
