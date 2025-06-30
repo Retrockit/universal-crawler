@@ -95,7 +95,6 @@ Step 5: Install required browser files
 pipx inject crawl4dev playwright
 
 # Install browser binaries using the injected playwright
-pipx runpip crawl4dev install playwright
 pipx run --spec crawl4dev playwright install chromium
 ```
 
