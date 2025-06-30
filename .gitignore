@@ -233,8 +233,6 @@ crawl_temp/
 # Sample/test output files
 sample_output/
 test_results/
-src/crawl4dev/py.typed
-crawled_docs/playwright/playwright.dev_docs_20250630_003036.md
-crawled_docs/playwright/playwright.dev_index_20250630_003036.md
-crawled_docs/playwright/playwright.dev_metadata_20250630_003036.json
-crawled_docs/playwright/sections/python.md
+
+# Specific crawler output patterns that were accidentally committed
+crawled_docs/

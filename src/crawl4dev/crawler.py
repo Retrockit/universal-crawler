@@ -7,6 +7,7 @@ import shutil
 from datetime import datetime
 from typing import Any
 from urllib.parse import unquote, urljoin, urlparse
+
 import yaml
 from crawl4ai import AsyncWebCrawler
 
@@ -70,7 +71,10 @@ class UniversalDocsCrawler:
                 r".*/admin.*",
                 r".*/dashboard.*",
                 r".*/settings.*",
-                r".*\.(pdf|zip|tar|gz|exe|dmg|pkg)$",
+                # File types (also handled in is_valid_url but good to have here too)
+                r".*\.(pdf|zip|tar|gz|exe|dmg|pkg|png|jpg|jpeg|gif|svg|webp|ico|bmp)$",
+                # Asset directories
+                r".*/(_images|images|img|assets|static|media|files|downloads)/.*",
                 r".*#.*",  # Skip anchor links
                 r".*\?.*page=.*",  # Skip pagination
                 r".*/search.*",
@@ -95,6 +99,59 @@ class UniversalDocsCrawler:
             if not parsed.scheme or not parsed.netloc:
                 return False
         except Exception:
+            return False
+
+        # Skip common file types that aren't web pages
+        file_extensions = [
+            # Images
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".svg",
+            ".webp",
+            ".ico",
+            ".bmp",
+            # Documents
+            ".pdf",
+            ".doc",
+            ".docx",
+            ".xls",
+            ".xlsx",
+            ".ppt",
+            ".pptx",
+            # Archives
+            ".zip",
+            ".tar",
+            ".gz",
+            ".rar",
+            ".7z",
+            # Media
+            ".mp4",
+            ".mp3",
+            ".avi",
+            ".mov",
+            ".wav",
+            # Code/Data
+            ".json",
+            ".xml",
+            ".csv",
+            ".txt",
+            ".log",
+            # Fonts
+            ".woff",
+            ".woff2",
+            ".ttf",
+            ".eot",
+            # Other
+            ".css",
+            ".js",
+            ".map",
+        ]
+
+        url_lower = url.lower()
+        if any(url_lower.endswith(ext) for ext in file_extensions):
+            print(f"⚠️  Skipping file URL (not a webpage): {url}")
             return False
 
         # Decode URL-encoded characters for better pattern matching
@@ -302,7 +359,9 @@ class UniversalDocsCrawler:
 
         return links
 
-    async def crawl_page(self, crawler: Any, url: str) -> tuple[dict[str, Any] | None, set[str]]:
+    async def crawl_page(
+        self, crawler: Any, url: str
+    ) -> tuple[dict[str, Any] | None, set[str]]:
         """Crawl a single page with enhanced error handling"""
         try:
             print(f"🔄 Crawling: {url}")
@@ -403,7 +462,9 @@ class UniversalDocsCrawler:
 
         return None, set()
 
-    async def deep_crawl(self, start_url: str, max_pages: int = 100) -> list[dict[str, Any]]:
+    async def deep_crawl(
+        self, start_url: str, max_pages: int = 100
+    ) -> list[dict[str, Any]]:
         """Perform deep crawl of the website with better error handling"""
         self.setup_for_website(start_url)
 
@@ -472,7 +533,10 @@ class UniversalDocsCrawler:
         return self.results
 
     def save_llm_optimized_results(
-        self, results: list[dict[str, Any]], base_output_dir: str, site_name: str | None = None
+        self,
+        results: list[dict[str, Any]],
+        base_output_dir: str,
+        site_name: str | None = None,
     ) -> tuple[str, str, str, str]:
         """Save results in formats optimized for LLM consumption"""
         # Create site-specific directory
@@ -504,7 +568,9 @@ class UniversalDocsCrawler:
 
         return combined_file, metadata_file, index_file, sections_dir
 
-    def create_llm_markdown(self, results: list[dict[str, Any]], filename: str, site_name: str) -> None:
+    def create_llm_markdown(
+        self, results: list[dict[str, Any]], filename: str, site_name: str
+    ) -> None:
         """Create a comprehensive markdown file optimized for LLM understanding"""
         # Sort results logically
         sorted_results = sorted(
@@ -593,7 +659,9 @@ class UniversalDocsCrawler:
         print(f"📁 Section files created in: {sections_dir}")
         print(f"📊 Sections: {', '.join(sections.keys())}")
 
-    def save_metadata(self, results: list[dict[str, Any]], filename: str, site_name: str) -> None:
+    def save_metadata(
+        self, results: list[dict[str, Any]], filename: str, site_name: str
+    ) -> None:
         """Save comprehensive metadata for search and analysis"""
         metadata = {
             "site_info": {
@@ -635,7 +703,9 @@ class UniversalDocsCrawler:
 
         print(f"📋 Metadata saved: {filename}")
 
-    def create_llm_index(self, results: list[dict[str, Any]], filename: str, site_name: str) -> None:
+    def create_llm_index(
+        self, results: list[dict[str, Any]], filename: str, site_name: str
+    ) -> None:
         """Create an LLM-friendly index with summaries"""
         content = f"# {site_name.title()} Documentation Index\n\n"
         content += "This index provides a structured overview of all documentation content, optimized for LLM understanding and navigation.\n\n"

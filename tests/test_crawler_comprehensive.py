@@ -5,7 +5,7 @@ import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import respx  # type: ignore[import-untyped]
+import respx
 from httpx import Response
 
 from crawl4dev.crawler import UniversalDocsCrawler, create_sample_config
@@ -72,7 +72,9 @@ class TestUniversalDocsCrawler:
             (None, "https://example.com", False),
         ],
     )
-    def test_is_valid_url(self, test_url: str | None, base_domain: str, expected: bool) -> None:
+    def test_is_valid_url(
+        self, test_url: str | None, base_domain: str, expected: bool
+    ) -> None:
         """Test URL validation functionality."""
         crawler = UniversalDocsCrawler()
         crawler.domain = base_domain
@@ -250,7 +252,9 @@ First, install the software...
     @pytest.mark.asyncio
     async def test_crawl_page_success(self) -> None:
         """Test successful page crawling."""
-        crawler = UniversalDocsCrawler({"min_content_length": 50})  # Lower threshold for testing
+        crawler = UniversalDocsCrawler(
+            {"min_content_length": 50}
+        )  # Lower threshold for testing
         crawler.domain = "https://example.com"
         crawler.url_patterns = {"include": [".*"], "exclude": []}
 
@@ -372,7 +376,7 @@ class TestIntegrationScenarios:
             mock_result1.html = '<a href="/guide">Guide</a>'
             mock_result1.status_code = 200
 
-            # Mock second page response with longer content  
+            # Mock second page response with longer content
             mock_result2 = MagicMock()
             mock_result2.success = True
             mock_result2.markdown = (

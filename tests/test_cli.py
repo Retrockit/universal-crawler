@@ -3,7 +3,7 @@
 import sys
 from unittest.mock import patch
 
-import pytest  # type: ignore[import-untyped]
+import pytest
 
 from crawl4dev import __version__
 

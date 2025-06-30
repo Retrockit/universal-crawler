@@ -76,7 +76,9 @@ def test_url_parsing() -> None:
             print(f"✅ {url} → {site_name}")
         else:
             print(f"❌ {url} → {site_name} (expected {expected})")
-            assert False, f"Site name extraction failed for {url}: got {site_name}, expected {expected}"
+            assert False, (
+                f"Site name extraction failed for {url}: got {site_name}, expected {expected}"
+            )
 
     print("✅ URL parsing: PASSED")
     assert True
@@ -155,7 +157,9 @@ def test_url_validation() -> None:
                 print(f"✅ {url} → {result}")
             else:
                 print(f"❌ {url} → {result} (expected {expected})")
-                assert False, f"URL validation failed for {url}: got {result}, expected {expected}"
+                assert False, (
+                    f"URL validation failed for {url}: got {result}, expected {expected}"
+                )
 
         print("✅ URL validation: PASSED")
         assert True
