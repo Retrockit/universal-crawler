@@ -459,6 +459,29 @@ crawl4dev --create-config
 # Edit crawler_config.yaml and use: crawl4dev https://example.com --config crawler_config.yaml
 ```
 
+### Problem-Specific Solutions
+
+#### Problem: "BrowserConfig object has no attribute 'config'" or SVG/image file errors
+
+**Solution:**
+
+This error occurs when the crawler tries to process image files (SVG, PNG, etc.) as web pages. The latest version includes better filtering to prevent this.
+
+```bash
+# If you see this error with SVG or image files, update to the latest version
+pipx upgrade crawl4dev
+
+# For development setup
+git pull origin main
+uv sync
+```
+
+The crawler now automatically skips common file types like:
+
+- Images: `.svg`, `.png`, `.jpg`, `.gif`, etc.
+- Documents: `.pdf`, `.doc`, `.zip`, etc.
+- Asset directories: `/images/`, `/_images/`, `/assets/`, etc.
+
 ### Performance Tips
 
 #### For Large Documentation Sites
@@ -927,144 +950,3 @@ ui_patterns = [
 - Respect server response times
 - Configurable crawl speeds
 - Monitor for rate limiting
-
-## 📊 Performance & Statistics
-
-### Typical Performance Metrics
-
-| Metric           | Range            | Notes                  |
-| ---------------- | ---------------- | ---------------------- |
-| **Speed**        | 2-5 pages/second | With respectful delays |
-| **Success Rate** | 85-95%           | Well-structured sites  |
-| **Memory Usage** | 100-500MB        | Depends on site size   |
-| **Word Count**   | 50,000-500,000   | Per documentation site |
-
-### Resource Usage
-
-#### **Disk Space Requirements**
-
-- **Small sites** (5-20 pages): 1-5MB output
-- **Medium sites** (20-100 pages): 5-50MB output
-- **Large sites** (100+ pages): 50-500MB output
-- **Browser cache**: 100-200MB (one-time download)
-
-#### **Network Usage**
-
-- **Bandwidth**: 1-10MB per crawl session
-- **Requests**: 1-2 requests per page (plus resources)
-- **Rate limiting**: Built-in 1-2 second delays
-
-#### **Processing Time**
-
-- **Small documentation sites**: 1-5 minutes
-- **Medium documentation sites**: 5-30 minutes
-- **Large documentation sites**: 30-120 minutes
-
-## 🤝 Contributing
-
-### Development Setup
-
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/universal-docs-crawler.git
-cd universal-docs-crawler
-
-# Install development dependencies
-uv sync --extra dev
-
-# Install pre-commit hooks
-uv run pre-commit install
-
-# Run tests
-uv run pytest
-```
-
-### Running Tests
-
-```bash
-# Run all tests
-uv run pytest
-
-# Run with coverage
-uv run pytest --cov=src/crawl4dev
-
-# Run specific test file
-uv run pytest tests/test_crawler.py
-
-# Run with verbose output
-uv run pytest -v
-```
-
-### Code Quality Checks
-
-```bash
-# Type checking
-uv run mypy src/
-
-# Linting and formatting
-uv run ruff check src/ tests/
-uv run ruff format src/ tests/
-
-# Check imports
-uv run ruff check --select I src/ tests/
-```
-
-### Making Changes
-
-1. **Fork** the repository
-2. **Create** a feature branch: `git checkout -b feature-name`
-3. **Make** your changes with proper tests
-4. **Run** quality checks: `uv run ruff check && uv run mypy src/`
-5. **Test** your changes: `uv run pytest`
-6. **Commit** with clear messages: `git commit -m "Add feature description"`
-7. **Push** and create a pull request
-
-### Testing Guidelines
-
-- **Unit tests** for individual functions
-- **Integration tests** for crawler workflows
-- **Mock external requests** in tests
-- **Test error conditions** and edge cases
-- **Maintain >90% code coverage**
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- **[Crawl4AI](https://github.com/unclecode/crawl4ai)** - The powerful crawling engine that makes this possible
-- **[Playwright](https://playwright.dev/)** - Modern browser automation
-- **[Pydantic](https://pydantic.dev/)** - Data validation and settings management
-
-## 📞 Support
-
-### Getting Help
-
-- **Documentation**: This README contains comprehensive usage instructions
-- **Issues**: Report bugs and request features on [GitHub Issues](https://github.com/yourusername/universal-docs-crawler/issues)
-- **Discussions**: Ask questions in [GitHub Discussions](https://github.com/yourusername/universal-docs-crawler/discussions)
-
-### Reporting Issues
-
-When reporting bugs, please include:
-
-1. **Your operating system** (Windows, macOS, Linux)
-2. **Python version** (`python --version`)
-3. **Installation method** (pipx, uv, pip)
-4. **Full error message** (copy and paste from terminal)
-5. **The URL you were trying to crawl**
-6. **Steps to reproduce** the issue
-
-### Feature Requests
-
-We welcome feature requests! Please:
-
-1. **Check existing issues** to avoid duplicates
-2. **Describe the use case** clearly
-3. **Explain why** it would be valuable
-4. **Provide examples** if possible
-
----
-
-**Made with ❤️ for the AI and documentation community**
