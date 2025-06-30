@@ -54,6 +54,8 @@ You must have these installed before continuing:
 
 #### Choose Your Installation Method
 
+⚠️ **IMPORTANT BROWSER SETUP**: This tool requires browser automation via Playwright. Each installation method includes specific steps to install browser files. **Do not skip the browser installation steps** or the crawler will fail with "browser not found" errors.
+
 **Pick ONE method below that matches your needs:**
 
 #### Method 1: Simple Installation (Recommended for Most Users)
@@ -89,9 +91,12 @@ pipx install git+https://github.com/yourusername/universal-docs-crawler.git
 Step 5: Install required browser files
 
 ```bash
-pipx inject universal-docs-crawler playwright
-pipx runpip universal-docs-crawler install playwright
-crawl4dev-playwright install chromium
+# Install playwright in the same environment
+pipx inject crawl4dev playwright
+
+# Install browser binaries using the injected playwright
+pipx runpip crawl4dev install playwright
+pipx run --spec crawl4dev playwright install chromium
 ```
 
 Step 6: Test that it works
@@ -107,11 +112,16 @@ You should see help text appear. If you get an error, go back and check each ste
 This method downloads everything automatically but may be slower:
 
 ```bash
-# Option A: Install and run in one command
+# Option A: Install and run in one command (includes browser setup)
 uvx --from git+https://github.com/yourusername/universal-docs-crawler.git crawl4dev https://fastapi.tiangolo.com/
 
 # Option B: Install for repeated use
 uvx install git+https://github.com/yourusername/universal-docs-crawler.git
+
+# Install browser files (required for Option B)
+uvx run --from git+https://github.com/yourusername/universal-docs-crawler.git playwright install chromium
+
+# Test it works
 crawl4dev --help
 ```
 
@@ -398,9 +408,9 @@ results = asyncio.run(advanced_crawl())
 # Make sure Playwright browsers are installed
 playwright install chromium
 
-# For pipx installations
-pipx inject universal-docs-crawler playwright
-pipx runpip universal-docs-crawler install playwright
+# For pipx installations - install playwright first, then browsers
+pipx inject crawl4dev playwright
+pipx run --spec crawl4dev playwright install chromium
 
 # For development setups
 uv run playwright install chromium
