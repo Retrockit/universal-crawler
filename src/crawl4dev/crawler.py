@@ -537,7 +537,9 @@ class UniversalDocsCrawler:
         results: list[dict[str, Any]],
         base_output_dir: str,
         site_name: str | None = None,
-    ) -> tuple[str, str, str, str]:
+        enable_chunking: bool = True,
+        chunk_size: int = 4000,
+    ) -> tuple[str, str, str, str, str | None]:
         """Save results in formats optimized for LLM consumption"""
         # Create site-specific directory
         output_dir = self.create_site_directory(base_output_dir, self.base_url)
@@ -566,7 +568,13 @@ class UniversalDocsCrawler:
         index_file = os.path.join(output_dir, f"{site_name}_index_{timestamp}.md")
         self.create_llm_index(results, index_file, site_name)
 
-        return combined_file, metadata_file, index_file, sections_dir
+        # 5. LLM-optimized content chunks (if enabled)
+        chunks_dir = None
+        if enable_chunking:
+            chunks, chunk_manifest = self.create_chunks(results, chunk_size, site_name)
+            chunks_dir = self.save_chunks(chunks, chunk_manifest, output_dir, site_name)
+
+        return combined_file, metadata_file, index_file, sections_dir, chunks_dir
 
     def create_llm_markdown(
         self, results: list[dict[str, Any]], filename: str, site_name: str
@@ -800,6 +808,268 @@ class UniversalDocsCrawler:
 
         return site_dir
 
+    def estimate_tokens(self, text: str) -> int:
+        """Estimate token count for text (rough approximation: 1 token ≈ 4 characters)"""
+        return len(text) // 4
+
+    def split_text_semantically(
+        self, text: str, max_tokens: int, min_tokens: int = 1000
+    ) -> list[str]:
+        """Split text at semantic boundaries while respecting token limits"""
+        chunks = []
+        current_chunk = ""
+
+        # Split by double newlines first (paragraph breaks)
+        paragraphs = text.split("\n\n")
+
+        for paragraph in paragraphs:
+            # Check if adding this paragraph would exceed the limit
+            test_chunk = (
+                current_chunk + "\n\n" + paragraph if current_chunk else paragraph
+            )
+
+            if self.estimate_tokens(test_chunk) <= max_tokens:
+                current_chunk = test_chunk
+            else:
+                # If current chunk has enough content, save it
+                if current_chunk and self.estimate_tokens(current_chunk) >= min_tokens:
+                    chunks.append(current_chunk.strip())
+                    current_chunk = paragraph
+                else:
+                    # If paragraph is too long by itself, split by sentences
+                    if self.estimate_tokens(paragraph) > max_tokens:
+                        # Split by periods, but keep code blocks intact
+                        if "```" in paragraph:
+                            # Handle code blocks specially
+                            chunks.append(
+                                current_chunk.strip()
+                            ) if current_chunk else None
+                            chunks.append(paragraph)
+                            current_chunk = ""
+                        else:
+                            # Split by sentences
+                            sentences = re.split(r"(?<=[.!?])\s+", paragraph)
+                            for sentence in sentences:
+                                test_chunk = (
+                                    current_chunk + " " + sentence
+                                    if current_chunk
+                                    else sentence
+                                )
+                                if self.estimate_tokens(test_chunk) <= max_tokens:
+                                    current_chunk = test_chunk
+                                else:
+                                    if current_chunk:
+                                        chunks.append(current_chunk.strip())
+                                    current_chunk = sentence
+                    else:
+                        # Paragraph fits, but combined with current chunk it doesn't
+                        if current_chunk:
+                            chunks.append(current_chunk.strip())
+                        current_chunk = paragraph
+
+        # Add remaining content
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+
+        return [chunk for chunk in chunks if chunk.strip()]
+
+    def create_chunks(
+        self,
+        results: list[dict[str, Any]],
+        chunk_size: int = 4000,
+        site_name: str = "docs",
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Create LLM-optimized chunks from crawled results"""
+        chunks: list[dict[str, Any]] = []
+        chunk_manifest: dict[str, Any] = {
+            "site_name": site_name,
+            "source_url": self.base_url,
+            "generated_at": datetime.now().isoformat(),
+            "total_chunks": 0,
+            "chunk_size_target": chunk_size,
+            "chunks": [],
+        }
+
+        # Sort results for logical grouping
+        sorted_results = sorted(
+            results,
+            key=lambda x: (
+                x["path"].count("/"),  # Depth first
+                x["path"],  # Then alphabetically
+            ),
+        )
+
+        current_chunk_content = ""
+        current_chunk_topics: list[str] = []
+        current_chunk_pages: list[dict[str, Any]] = []
+        chunk_number = 1
+
+        for result in sorted_results:
+            page_content = f"\n\n## {result['title']}\n\n"
+            page_content += f"**URL:** {result['url']}\n"
+            page_content += f"**Path:** `{result['path']}`\n\n"
+            page_content += result["markdown"]
+
+            # Check if adding this page would exceed chunk size
+            test_content = current_chunk_content + page_content
+            estimated_tokens = self.estimate_tokens(test_content)
+
+            if estimated_tokens <= chunk_size or not current_chunk_content:
+                # Add to current chunk (add header if this is the first content)
+                if not current_chunk_content:
+                    current_chunk_content = f"# {site_name.title()} Documentation - Chunk {chunk_number}\n\n"
+                    current_chunk_content += f"**Source**: {self.base_url}\n"
+                    current_chunk_content += (
+                        f"**Chunk**: {chunk_number} of [total_chunks_placeholder]\n"
+                    )
+
+                current_chunk_content += page_content
+                current_chunk_topics.append(result["title"])
+                current_chunk_pages.append(
+                    {
+                        "url": result["url"],
+                        "title": result["title"],
+                        "word_count": result["word_count"],
+                    }
+                )
+            else:
+                # Save current chunk and start new one
+                if current_chunk_content:
+                    chunk_info = self._create_chunk_info(
+                        chunk_number,
+                        current_chunk_content,
+                        current_chunk_topics,
+                        current_chunk_pages,
+                        site_name,
+                    )
+                    chunks.append(chunk_info)
+                    chunk_manifest["chunks"].append(
+                        {
+                            "chunk_number": chunk_number,
+                            "filename": chunk_info["filename"],
+                            "topics": ", ".join(
+                                current_chunk_topics[:3]
+                            ),  # First 3 topics
+                            "page_count": len(current_chunk_pages),
+                            "word_count": sum(
+                                p["word_count"] for p in current_chunk_pages
+                            ),
+                            "estimated_tokens": self.estimate_tokens(
+                                current_chunk_content
+                            ),
+                        }
+                    )
+
+                # Start new chunk
+                chunk_number += 1
+                current_chunk_content = (
+                    f"# {site_name.title()} Documentation - Chunk {chunk_number}\n\n"
+                )
+                current_chunk_content += f"**Source**: {self.base_url}\n"
+                current_chunk_content += (
+                    f"**Chunk**: {chunk_number} of [total_chunks_placeholder]\n"
+                )
+                current_chunk_content += page_content
+                current_chunk_topics = [result["title"]]
+                current_chunk_pages = [
+                    {
+                        "url": result["url"],
+                        "title": result["title"],
+                        "word_count": result["word_count"],
+                    }
+                ]
+
+        # Add final chunk
+        if current_chunk_content:
+            chunk_info = self._create_chunk_info(
+                chunk_number,
+                current_chunk_content,
+                current_chunk_topics,
+                current_chunk_pages,
+                site_name,
+            )
+            chunks.append(chunk_info)
+            chunk_manifest["chunks"].append(
+                {
+                    "chunk_number": chunk_number,
+                    "filename": chunk_info["filename"],
+                    "topics": ", ".join(current_chunk_topics[:3]),
+                    "page_count": len(current_chunk_pages),
+                    "word_count": sum(p["word_count"] for p in current_chunk_pages),
+                    "estimated_tokens": self.estimate_tokens(current_chunk_content),
+                }
+            )
+
+        # Update total chunks count and fix placeholders
+        chunk_manifest["total_chunks"] = len(chunks)
+        for chunk in chunks:
+            chunk["content"] = chunk["content"].replace(
+                "[total_chunks_placeholder]", str(len(chunks))
+            )
+
+        return chunks, chunk_manifest
+
+    def _create_chunk_info(
+        self,
+        chunk_number: int,
+        content: str,
+        topics: list[str],
+        pages: list[dict[str, Any]],
+        site_name: str,
+    ) -> dict[str, Any]:
+        """Create chunk information dictionary"""
+        # Create safe filename
+        main_topic = topics[0] if topics else "content"
+        safe_topic = re.sub(r"[^\w\-_]", "-", main_topic.lower())[:30]
+        filename = f"{site_name}_chunk_{chunk_number:02d}_{safe_topic}.md"
+
+        # Add navigation context to content
+        enhanced_content = content
+        if chunk_number > 1:
+            enhanced_content += "\n\n---\n**Navigation Context**:\n"
+            enhanced_content += f"- Previous: [Chunk {chunk_number - 1}]\n"
+            enhanced_content += f"- Next: [Chunk {chunk_number + 1}] (if available)\n"
+            enhanced_content += (
+                "- Index: See chunk_manifest.json for complete topic map\n"
+            )
+
+        return {
+            "chunk_number": chunk_number,
+            "filename": filename,
+            "content": enhanced_content,
+            "topics": topics,
+            "pages": pages,
+            "word_count": sum(p["word_count"] for p in pages),
+            "estimated_tokens": self.estimate_tokens(content),
+        }
+
+    def save_chunks(
+        self,
+        chunks: list[dict[str, Any]],
+        manifest: dict[str, Any],
+        output_dir: str,
+        site_name: str,
+    ) -> str:
+        """Save chunks to individual files and create manifest"""
+        chunks_dir = os.path.join(output_dir, "chunks")
+        os.makedirs(chunks_dir, exist_ok=True)
+
+        # Save individual chunk files
+        for chunk in chunks:
+            chunk_path = os.path.join(chunks_dir, chunk["filename"])
+            with open(chunk_path, "w", encoding="utf-8") as f:
+                f.write(chunk["content"])
+
+        # Save manifest
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        manifest_filename = f"{site_name}_chunk_manifest_{timestamp}.json"
+        manifest_path = os.path.join(chunks_dir, manifest_filename)
+
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2, ensure_ascii=False)
+
+        return chunks_dir
+
 
 def create_sample_config() -> None:
     """Create a sample configuration file"""
@@ -851,6 +1121,14 @@ def create_sample_config() -> None:
             "site_name": "auto",  # Will be auto-detected
             "output_dir": "crawled_docs",  # Base directory - site-specific subdirectories will be created
         },
+        "chunk_settings": {
+            "chunk_size": 4000,  # Target tokens per chunk
+            "min_chunk_size": 1000,  # Minimum chunk size
+            "max_chunk_size": 6000,  # Maximum chunk size
+            "preserve_code_blocks": True,  # Don't split code examples
+            "include_navigation": True,  # Add prev/next chunk references
+            "semantic_splitting": True,  # Split at headers, not arbitrary points
+        },
     }
 
     with open("crawler_config.yaml", "w") as f:
@@ -875,6 +1153,17 @@ async def main() -> None:
         help="Base output directory (site-specific subdirectories will be created)",
     )
     parser.add_argument("--site-name", "-n", help="Site name for output files")
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=4000,
+        help="Target token count per chunk for LLM optimization (default: 4000)",
+    )
+    parser.add_argument(
+        "--no-chunking",
+        action="store_true",
+        help="Disable automatic chunking for LLM optimization",
+    )
     parser.add_argument(
         "--create-config", action="store_true", help="Create sample configuration file"
     )
@@ -923,16 +1212,30 @@ async def main() -> None:
     if results:
         # Save results
         site_name = args.site_name or urlparse(args.url).netloc.replace("www.", "")
-        combined_file, metadata_file, index_file, sections_dir = (
-            crawler.save_llm_optimized_results(results, args.output_dir, site_name)
+        enable_chunking = not args.no_chunking
+
+        combined_file, metadata_file, index_file, sections_dir, chunks_dir = (
+            crawler.save_llm_optimized_results(
+                results,
+                args.output_dir,
+                site_name,
+                enable_chunking=enable_chunking,
+                chunk_size=args.chunk_size,
+            )
         )
 
         print("\n🎉 Crawling completed successfully!")
-        print(f"� Site directory: {os.path.dirname(combined_file)}")
-        print(f"�📄 Main file: {combined_file}")
-        print(f"� Sections: {sections_dir}")
+        print(f"📁 Site directory: {os.path.dirname(combined_file)}")
+        print(f"📄 Main file: {combined_file}")
+        print(f"📂 Sections: {sections_dir}")
         print(f"📋 Metadata: {metadata_file}")
         print(f"📑 Index: {index_file}")
+
+        if chunks_dir:
+            print(f"🤖 LLM Chunks: {chunks_dir}")
+            # Count chunk files
+            chunk_files = [f for f in os.listdir(chunks_dir) if f.endswith(".md")]
+            print(f"   Created {len(chunk_files)} optimized chunks for LLM consumption")
 
         # Show statistics
         total_words = sum(r["word_count"] for r in results)
@@ -947,9 +1250,19 @@ async def main() -> None:
         )
 
         print("\n🤖 LLM Usage Tips:")
-        print(f"• Use '{combined_file}' for comprehensive context")
+        if chunks_dir:
+            print(
+                f"• Use chunks in '{chunks_dir}' for LLM consumption (size: {args.chunk_size} tokens)"
+            )
+            print(
+                f"• Use '{combined_file}' for comprehensive context (may be too large for some LLMs)"
+            )
+        else:
+            print(f"• Use '{combined_file}' for comprehensive context")
         print(f"• Use files in '{sections_dir}' for specific topics")
         print(f"• Check '{index_file}' for content overview")
+        if chunks_dir:
+            print("• Each chunk is self-contained and ready for copy-paste into LLMs")
 
     else:
         print("❌ No content was crawled successfully")

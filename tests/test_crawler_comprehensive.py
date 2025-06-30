@@ -235,13 +235,15 @@ First, install the software...
         ):  # Don't overwrite, create new
             files = crawler.save_llm_optimized_results(results, temp_dir)
 
-            combined_file, metadata_file, index_file, sections_dir = files
+            combined_file, metadata_file, index_file, sections_dir, chunks_dir = files
 
             # Check that files were created
             assert os.path.exists(combined_file)
             assert os.path.exists(metadata_file)
             assert os.path.exists(index_file)
             assert os.path.exists(sections_dir)
+            assert chunks_dir is not None  # Chunking enabled by default
+            assert os.path.exists(chunks_dir)
 
             # Check file contents
             with open(combined_file) as f:
