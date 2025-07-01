@@ -1,15 +1,71 @@
-import argparse
 import asyncio
 import json
 import os
 import re
 import shutil
+import subprocess
+import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urljoin, urlparse
 
-import yaml
 from crawl4ai import AsyncWebCrawler
+
+
+def check_and_install_playwright() -> bool:
+    """Check if Playwright browsers are installed and install if needed."""
+    try:
+        # Check if chromium is available by trying to get the executable path
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from playwright.sync_api import sync_playwright; "
+                "p = sync_playwright().start(); "
+                "print(p.chromium.executable_path); "
+                "p.stop()",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        # If we get here, Playwright browsers are already installed
+        if result.stdout.strip() and Path(result.stdout.strip()).exists():
+            return True
+
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+    ):
+        pass  # Browser not found, need to install
+
+    # Install Playwright browsers
+    print("🎭 First-time setup: Installing Playwright browser (Chromium)...")
+    print("This is a one-time process that may take a few minutes...")
+
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            check=True,
+            timeout=300,  # 5 minutes timeout
+        )
+
+        print("✅ Playwright browser installation completed!")
+        print("🎉 crawl4dev is now ready to use!")
+        return True
+
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Failed to install Playwright browsers: {e}")
+        print("⚠️  Please run 'playwright install chromium' manually.")
+        return False
+    except subprocess.TimeoutExpired:
+        print("❌ Installation timed out. Please check your internet connection.")
+        print("⚠️  Please run 'playwright install chromium' manually.")
+        return False
 
 
 class UniversalDocsCrawler:
@@ -424,6 +480,7 @@ class UniversalDocsCrawler:
                         "description": description,
                         "path": structured_path,
                         "markdown": cleaned_markdown,
+                        "raw_html": result.html,  # Store raw HTML for later saving
                         "content_length": len(cleaned_markdown),
                         "word_count": len(cleaned_markdown.split()),
                         "crawled_at": datetime.now().isoformat(),
@@ -537,9 +594,16 @@ class UniversalDocsCrawler:
         results: list[dict[str, Any]],
         base_output_dir: str,
         site_name: str | None = None,
-        enable_chunking: bool = True,
+        enable_chunking: bool = False,
         chunk_size: int = 4000,
-    ) -> tuple[str, str, str, str, str | None]:
+        save_html: bool = False,
+        save_individual_markdown: bool = True,
+        enable_sections: bool = False,
+        enable_combined: bool = False,
+        enable_index: bool = False,
+    ) -> tuple[
+        str | None, str, str | None, str | None, str | None, str | None, str | None
+    ]:
         """Save results in formats optimized for LLM consumption"""
         # Create site-specific directory
         output_dir = self.create_site_directory(base_output_dir, self.base_url)
@@ -550,13 +614,17 @@ class UniversalDocsCrawler:
             # Extract clean site name from the directory name
             site_name = os.path.basename(output_dir)
 
-        # 1. Single comprehensive markdown file for LLM context
-        combined_file = os.path.join(output_dir, f"{site_name}_docs_{timestamp}.md")
-        self.create_llm_markdown(results, combined_file, site_name)
+        # 1. Single comprehensive markdown file for LLM context (optional)
+        combined_file = None
+        if enable_combined:
+            combined_file = os.path.join(output_dir, f"{site_name}_docs_{timestamp}.md")
+            self.create_llm_markdown(results, combined_file, site_name)
 
-        # 2. Structured sections for specific queries
-        sections_dir = os.path.join(output_dir, "sections")
-        self.create_sectioned_files(results, sections_dir, site_name)
+        # 2. Structured sections for specific queries (optional)
+        sections_dir = None
+        if enable_sections:
+            sections_dir = os.path.join(output_dir, "sections")
+            self.create_sectioned_files(results, sections_dir, site_name)
 
         # 3. Metadata and search index
         metadata_file = os.path.join(
@@ -564,17 +632,39 @@ class UniversalDocsCrawler:
         )
         self.save_metadata(results, metadata_file, site_name)
 
-        # 4. LLM-friendly index with summaries
-        index_file = os.path.join(output_dir, f"{site_name}_index_{timestamp}.md")
-        self.create_llm_index(results, index_file, site_name)
+        # 4. LLM-friendly index with summaries (optional)
+        index_file = None
+        if enable_index:
+            index_file = os.path.join(output_dir, f"{site_name}_index_{timestamp}.md")
+            self.create_llm_index(results, index_file, site_name)
 
-        # 5. LLM-optimized content chunks (if enabled)
+        # 5. Raw HTML files in separate directory (optional)
+        html_dir = None
+        if save_html:
+            html_dir = os.path.join(output_dir, "html")
+            self.save_raw_html_files(results, html_dir, site_name)
+
+        # 6. Individual markdown files in separate directory (optional)
+        markdown_dir = None
+        if save_individual_markdown:
+            markdown_dir = os.path.join(output_dir, "markdown")
+            self.save_individual_markdown_files(results, markdown_dir, site_name)
+
+        # 7. LLM-optimized content chunks (if enabled)
         chunks_dir = None
         if enable_chunking:
             chunks, chunk_manifest = self.create_chunks(results, chunk_size, site_name)
             chunks_dir = self.save_chunks(chunks, chunk_manifest, output_dir, site_name)
 
-        return combined_file, metadata_file, index_file, sections_dir, chunks_dir
+        return (
+            combined_file,
+            metadata_file,
+            index_file,
+            sections_dir,
+            chunks_dir,
+            html_dir,
+            markdown_dir,
+        )
 
     def create_llm_markdown(
         self, results: list[dict[str, Any]], filename: str, site_name: str
@@ -750,6 +840,111 @@ class UniversalDocsCrawler:
             f.write(content)
 
         print(f"📑 LLM index created: {filename}")
+
+    def save_raw_html_files(
+        self, results: list[dict[str, Any]], html_dir: str, site_name: str
+    ) -> None:
+        """Save raw HTML files for each crawled page"""
+        os.makedirs(html_dir, exist_ok=True)
+
+        for i, result in enumerate(results, 1):
+            # Create safe filename from URL path
+            url_path = urlparse(result["url"]).path
+            if url_path == "/" or not url_path:
+                safe_filename = "index.html"
+            else:
+                # Convert path to safe filename
+                safe_path = url_path.strip("/").replace("/", "_")
+                safe_filename = re.sub(r"[^\w\-_.]", "_", safe_path)
+                if not safe_filename.endswith(".html"):
+                    safe_filename += ".html"
+
+            # Add number prefix for uniqueness and ordering
+            numbered_filename = f"{i:03d}_{safe_filename}"
+            html_file = os.path.join(html_dir, numbered_filename)
+
+            # Create HTML content with metadata header
+            html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{result["title"]}</title>
+    <!-- Crawl Metadata -->
+    <meta name="crawl-url" content="{result["url"]}">
+    <meta name="crawl-path" content="{result["path"]}">
+    <meta name="crawl-timestamp" content="{result["crawled_at"]}">
+    <meta name="crawl-word-count" content="{result["word_count"]}">
+    <meta name="crawl-description" content="{result.get("description", "").replace('"', "&quot;")}">
+</head>
+<body>
+    <!-- Original HTML content from crawl -->
+    {result.get("raw_html", "<p>No HTML content available</p>")}
+</body>
+</html>"""
+
+            with open(html_file, "w", encoding="utf-8") as f:
+                f.write(html_content)
+
+        print(f"📄 Raw HTML files saved in: {html_dir}")
+        print(f"📊 Created {len(results)} HTML files")
+
+    def save_individual_markdown_files(
+        self, results: list[dict[str, Any]], markdown_dir: str, site_name: str
+    ) -> None:
+        """Save individual markdown files for each crawled page"""
+        os.makedirs(markdown_dir, exist_ok=True)
+
+        for i, result in enumerate(results, 1):
+            # Create safe filename from title or URL path
+            if result["title"] and result["title"] != "Documentation":
+                safe_title = re.sub(r"[^\w\-_\s]", "", result["title"])
+                safe_title = re.sub(r"\s+", "_", safe_title.strip())[:50]
+                safe_filename = f"{safe_title}.md"
+            else:
+                # Fallback to URL path
+                url_path = urlparse(result["url"]).path
+                if url_path == "/" or not url_path:
+                    safe_filename = "index.md"
+                else:
+                    safe_path = url_path.strip("/").replace("/", "_")
+                    safe_filename = re.sub(r"[^\w\-_.]", "_", safe_path) + ".md"
+
+            # Add number prefix for uniqueness and ordering
+            numbered_filename = f"{i:03d}_{safe_filename}"
+            md_file = os.path.join(markdown_dir, numbered_filename)
+
+            # Create markdown content with frontmatter
+            escaped_description = result.get("description", "").replace('"', '\\"')
+            md_content = f"""---
+title: "{result["title"]}"
+url: "{result["url"]}"
+path: "{result["path"]}"
+description: "{escaped_description}"
+word_count: {result["word_count"]}
+crawled_at: "{result["crawled_at"]}"
+status_code: {result.get("status_code", 200)}
+---
+
+# {result["title"]}
+
+**Source URL:** [{result["url"]}]({result["url"]})
+**Path:** `{result["path"]}`
+**Crawled:** {result["crawled_at"][:10]}
+**Words:** {result["word_count"]:,}
+
+{f"**Description:** {result['description']}" if result.get("description") else ""}
+
+---
+
+{result["markdown"]}
+"""
+
+            with open(md_file, "w", encoding="utf-8") as f:
+                f.write(md_content)
+
+        print(f"📝 Individual markdown files saved in: {markdown_dir}")
+        print(f"📊 Created {len(results)} markdown files")
 
     def create_site_directory(self, base_output_dir: str, url: str) -> str:
         """Create a site-specific directory with overwrite handling"""
@@ -1073,6 +1268,8 @@ class UniversalDocsCrawler:
 
 def create_sample_config() -> None:
     """Create a sample configuration file"""
+    import yaml
+
     config = {
         "crawl_settings": {
             "max_pages": 100,
@@ -1138,6 +1335,11 @@ def create_sample_config() -> None:
 
 
 async def main() -> None:
+    import argparse
+    import json
+
+    import yaml
+
     parser = argparse.ArgumentParser(
         description="Universal Documentation Crawler for LLM Training"
     )
@@ -1160,9 +1362,44 @@ async def main() -> None:
         help="Target token count per chunk for LLM optimization (default: 4000)",
     )
     parser.add_argument(
-        "--no-chunking",
+        "--no-html",
         action="store_true",
-        help="Disable automatic chunking for LLM optimization",
+        help="Disable saving raw HTML files (saves storage space)",
+    )
+    parser.add_argument(
+        "--enable-html",
+        action="store_true",
+        help="Enable saving raw HTML files (disabled by default)",
+    )
+    parser.add_argument(
+        "--no-markdown",
+        action="store_true",
+        help="Disable saving individual markdown files",
+    )
+    parser.add_argument(
+        "--html-only",
+        action="store_true",
+        help="Only save raw HTML files and main documentation (skips individual markdown files)",
+    )
+    parser.add_argument(
+        "--enable-chunking",
+        action="store_true",
+        help="Enable automatic chunking for LLM optimization (disabled by default)",
+    )
+    parser.add_argument(
+        "--enable-sections",
+        action="store_true",
+        help="Enable creation of section files for targeted queries (disabled by default)",
+    )
+    parser.add_argument(
+        "--enable-combined",
+        action="store_true",
+        help="Enable creation of combined documentation file (disabled by default)",
+    )
+    parser.add_argument(
+        "--enable-index",
+        action="store_true",
+        help="Enable creation of index/overview file (disabled by default)",
     )
     parser.add_argument(
         "--create-config", action="store_true", help="Create sample configuration file"
@@ -1176,8 +1413,24 @@ async def main() -> None:
 
     if not args.url:
         print("❌ Error: URL is required")
-        print("Usage: python main.py <URL>")
-        print("Example: python main.py https://caddyserver.com/docs/")
+        print()
+        print("🚀 Usage: crawl4dev <URL> [OPTIONS]")
+        print()
+        print("📖 Simple example:")
+        print("   crawl4dev https://docs.python.org/3/")
+        print()
+        print("🔧 With options:")
+        print(
+            "   crawl4dev https://docs.python.org/3/ --max-depth 2 --output-dir my-docs"
+        )
+        print()
+        print("💡 For help: crawl4dev --help")
+        return
+
+    # Check and install Playwright browsers if needed
+    if not check_and_install_playwright():
+        print("❌ Failed to setup Playwright browsers. Cannot continue.")
+        print("💡 Try running 'playwright install chromium' manually.")
         return
 
     # Initialize crawler
@@ -1188,6 +1441,8 @@ async def main() -> None:
         try:
             with open(args.config) as f:
                 if args.config.endswith((".yaml", ".yml")):
+                    import yaml
+
                     config = yaml.safe_load(f)
                 else:
                     config = json.load(f)
@@ -1212,30 +1467,82 @@ async def main() -> None:
     if results:
         # Save results
         site_name = args.site_name or urlparse(args.url).netloc.replace("www.", "")
-        enable_chunking = not args.no_chunking
+        enable_chunking = args.enable_chunking
+        enable_sections = args.enable_sections
+        enable_combined = args.enable_combined
+        enable_index = args.enable_index
 
-        combined_file, metadata_file, index_file, sections_dir, chunks_dir = (
-            crawler.save_llm_optimized_results(
-                results,
-                args.output_dir,
-                site_name,
-                enable_chunking=enable_chunking,
-                chunk_size=args.chunk_size,
-            )
+        # Determine output format options
+        save_html = (
+            args.enable_html and not args.no_html
+        )  # Only save HTML if explicitly enabled
+        save_individual_markdown = not args.no_markdown
+
+        # Handle --html-only flag (override individual markdown saving)
+        if args.html_only:
+            save_individual_markdown = False
+            save_html = True
+
+        (
+            combined_file,
+            metadata_file,
+            index_file,
+            sections_dir,
+            chunks_dir,
+            html_dir,
+            markdown_dir,
+        ) = crawler.save_llm_optimized_results(
+            results,
+            args.output_dir,
+            site_name,
+            enable_chunking=enable_chunking,
+            chunk_size=args.chunk_size,
+            save_html=save_html,
+            save_individual_markdown=save_individual_markdown,
+            enable_sections=enable_sections,
+            enable_combined=enable_combined,
+            enable_index=enable_index,
         )
 
         print("\n🎉 Crawling completed successfully!")
-        print(f"📁 Site directory: {os.path.dirname(combined_file)}")
-        print(f"📄 Main file: {combined_file}")
-        print(f"📂 Sections: {sections_dir}")
+        # Use output_dir or derive from metadata_file since those are always created
+        site_directory = os.path.dirname(metadata_file)
+        print(f"📁 Site directory: {site_directory}")
+
+        if combined_file:
+            print(f"📄 Combined file: {combined_file}")
+        else:
+            print("📄 Combined file: Disabled (use --enable-combined to enable)")
+
+        if sections_dir:
+            print(f"📂 Sections: {sections_dir}")
+        else:
+            print("📂 Sections: Disabled (use --enable-sections to enable)")
+
         print(f"📋 Metadata: {metadata_file}")
-        print(f"📑 Index: {index_file}")
+
+        if index_file:
+            print(f"📑 Index: {index_file}")
+        else:
+            print("📑 Index: Disabled (use --enable-index to enable)")
+
+        if html_dir:
+            print(f"🌐 Raw HTML: {html_dir}")
+        else:
+            print("🌐 Raw HTML: Disabled (use --enable-html to enable)")
+
+        if markdown_dir:
+            print(f"📝 Individual Markdown: {markdown_dir}")
+        else:
+            print("📝 Individual Markdown: Disabled (use --no-markdown to re-enable)")
 
         if chunks_dir:
             print(f"🤖 LLM Chunks: {chunks_dir}")
             # Count chunk files
             chunk_files = [f for f in os.listdir(chunks_dir) if f.endswith(".md")]
             print(f"   Created {len(chunk_files)} optimized chunks for LLM consumption")
+        else:
+            print("🤖 LLM Chunks: Disabled (use --enable-chunking to enable)")
 
         # Show statistics
         total_words = sum(r["word_count"] for r in results)
@@ -1250,17 +1557,49 @@ async def main() -> None:
         )
 
         print("\n🤖 LLM Usage Tips:")
-        if chunks_dir:
-            print(
-                f"• Use chunks in '{chunks_dir}' for LLM consumption (size: {args.chunk_size} tokens)"
-            )
-            print(
-                f"• Use '{combined_file}' for comprehensive context (may be too large for some LLMs)"
-            )
+
+        if combined_file:
+            if chunks_dir:
+                print(
+                    f"• Use chunks in '{chunks_dir}' for LLM consumption (size: {args.chunk_size} tokens)"
+                )
+                print(
+                    f"• Use '{combined_file}' for comprehensive context (may be too large for some LLMs)"
+                )
+            else:
+                print(f"• Use '{combined_file}' for comprehensive context")
         else:
-            print(f"• Use '{combined_file}' for comprehensive context")
-        print(f"• Use files in '{sections_dir}' for specific topics")
-        print(f"• Check '{index_file}' for content overview")
+            print(
+                "• Individual markdown files in 'markdown/' directory are optimized for LLM consumption"
+            )
+            if chunks_dir:
+                print(
+                    f"• Use chunks in '{chunks_dir}' for LLM consumption (size: {args.chunk_size} tokens)"
+                )
+            else:
+                print(
+                    "• Enable chunking with --enable-chunking for LLM-optimized content"
+                )
+
+        if markdown_dir:
+            print(
+                f"• Individual markdown files in '{markdown_dir}' for granular access"
+            )
+
+        if sections_dir:
+            print(f"• Use files in '{sections_dir}' for specific topics")
+        else:
+            print("• Enable sections with --enable-sections for topic-specific files")
+
+        if index_file:
+            print(f"• Check '{index_file}' for content overview")
+        else:
+            print("• Enable index with --enable-index for content overview")
+
+        if html_dir:
+            print(f"• Raw HTML files available in '{html_dir}' for debugging/analysis")
+        if not html_dir:
+            print("• Enable HTML output with --enable-html for debugging/analysis")
         if chunks_dir:
             print("• Each chunk is self-contained and ready for copy-paste into LLMs")
 
